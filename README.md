@@ -107,7 +107,7 @@ git clone https://github.com/AlanBacker/astrbot_plugin_beijing_fushengji
 | `enable_hacker` | false | 黑客改存款彩蛋（原版每局默认关闭、需手动开启，此处保持一致） |
 | `intel_price` / `intel_accuracy` | 500 / 75 | 小道消息价格与准确率 |
 | `ai_comment` | false | 结算后 AI 说书人点评 |
-| `ai_provider_id` | 空 | 说书人指定供应商 ID（留空 = 跟随会话默认；失败 3 次自动回退） |
+| `ai_provider_id` | 空 | 说书人供应商，从已配置的供应商下拉列表里选取（清除选择 = 跟随会话默认；失败 3 次自动回退） |
 
 存档在 `data/plugin_data/astrbot_plugin_beijing_fushengji/`：每个会话一个房间档（原子写入，坏档自动隔离），榜单全局一份。删除插件不会带走存档。
 
