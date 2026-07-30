@@ -586,7 +586,7 @@ def _process_player_day(room: Room, rng: random.Random, p: Player) -> list[str]:
         events.append(const.DEATH_TEXT)
         return events
     _roll_money_loss(rng, p, events)
-    if room.setting("enable_hacker", True):
+    if room.setting("enable_hacker", False):  # 原版默认关，需在设置里打开
         _roll_hacker(rng, p, events)
     p.cash = max(0, p.cash)
     if p.debt > const.THUG_DEBT_LINE:
@@ -597,10 +597,12 @@ def _process_player_day(room: Room, rng: random.Random, p: Player) -> list[str]:
 
 
 def _roll_gifts(room: Room, rng: random.Random, p: Player, events: list[str]) -> None:
-    """白捡商品事件：逐条独立判定；房满则中断剩余判定（原版行为）。"""
+    """白捡商品事件：逐条独立判定；货当日无行情则该条不发生、房满则中断剩余判定（均为原版行为）。"""
     for ev in const.GIFT_EVENTS:
         if rng.randrange(const.BUSINESS_POOL) % ev.freq != 0:
             continue
+        if room.prices[ev.good] <= 0:
+            continue  # 原版对全部商业事件先查 m_DrugPrice==0：没行情的货连白捡都轮不上
         cap_left = p.capacity_left()
         if cap_left <= 0:
             if ev.add_debt:  # 村长的货：房满货不给、债照加

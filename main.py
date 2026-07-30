@@ -340,7 +340,7 @@ class BeijingFushengji(Star):
                         n_days = int(days.strip())
                     settings = {
                         "max_players": int(self._cfg("max_players", const.MAX_PLAYERS)),
-                        "enable_hacker": bool(self._cfg("enable_hacker", True)),
+                        "enable_hacker": bool(self._cfg("enable_hacker", False)),
                         "market_impact": bool(self._cfg("market_impact", True)),
                         "intel_price": int(self._cfg("intel_price", const.INTEL_DEFAULT_PRICE)),
                         "intel_accuracy": int(
@@ -418,13 +418,14 @@ class BeijingFushengji(Star):
 
     @fusheng.command("买", alias={"购买", "进货", "buy"})
     async def cmd_buy(self, event: AstrMessageEvent, good: str = "", qty: str = ""):
-        """进货：浮生记 买 <货> <数|全>"""
+        """进货：浮生记 买 <货|序号> <数|全>"""
         uid, _ = self._sender(event)
 
         def act(room: Room, now: float) -> engine.ActionResult:
             if not qty.strip():
                 raise GameError(
-                    "买多少件？", "如「浮生记 买 手机 10」，或「浮生记 买 手机 全」按现金上限梭哈。"
+                    "买多少件？",
+                    "如「浮生记 买 手机 10」，货可用行情表序号（「浮生记 买 7 全」按现金上限梭哈）。",
                 )
             return engine.buy(room, uid, parse.parse_good(good), parse.parse_qty(qty))
 
@@ -433,12 +434,15 @@ class BeijingFushengji(Star):
 
     @fusheng.command("卖", alias={"出售", "出货", "sell"})
     async def cmd_sell(self, event: AstrMessageEvent, good: str = "", qty: str = ""):
-        """出货：浮生记 卖 <货> <数|全>"""
+        """出货：浮生记 卖 <货|序号> <数|全>"""
         uid, _ = self._sender(event)
 
         def act(room: Room, now: float) -> engine.ActionResult:
             if not qty.strip():
-                raise GameError("卖多少件？", "如「浮生记 卖 手机 10」，或「浮生记 卖 手机 全」清仓。")
+                raise GameError(
+                    "卖多少件？",
+                    "如「浮生记 卖 手机 10」，货可用行情表序号（「浮生记 卖 7 全」清仓）。",
+                )
             return engine.sell(room, uid, parse.parse_good(good), parse.parse_qty(qty))
 
         async for r in self._dispatch(event, act):

@@ -312,6 +312,7 @@ class TestDailyPipeline:
     def test_gift_event(self):
         room, _ = make_room(1)
         p = room.players["u0"]
+        room.prices[1] = 100  # 安静随机源会把 1 号货退市；送礼要求当日有行情
         engine._roll_gifts(room, ScriptRng([0]), p, ev := [])
         assert p.inventory[1].qty == 2 and p.inventory[1].avg_cost == 0
         assert len(ev) == 1
@@ -342,10 +343,24 @@ class TestDailyPipeline:
     def test_gift_dilutes_avg_cost(self):
         room, _ = make_room(1)
         p = room.players["u0"]
+        room.prices[1] = 100  # 同上：先把 1 号货摆回行情
         p.inventory[1] = Holding(qty=2, avg_cost=20000)
         engine._roll_gifts(room, ScriptRng([0]), p, [])
         assert p.inventory[1].qty == 4
         assert p.inventory[1].avg_cost == 20000 * 2 // 4
+
+    def test_gift_skipped_when_good_off_market(self):
+        """原版：商品当日无行情，白捡事件不发生（判定命中也作废）。"""
+        room, _ = make_room(1)
+        p = room.players["u0"]
+        room.prices[const.GIFT_EVENTS[0].good] = 0
+        engine._roll_gifts(room, ScriptRng([0]), p, ev := [])
+        assert ev == [] and not p.inventory
+        # 同一脚本、有行情 -> 正常送货（对照组）
+        room.prices[const.GIFT_EVENTS[0].good] = 100
+        engine._roll_gifts(room, ScriptRng([0]), p, ev2 := [])
+        assert p.inventory[const.GIFT_EVENTS[0].good].qty == const.GIFT_EVENTS[0].qty
+        assert len(ev2) == 1
 
     def test_health_event_first_hit_breaks(self):
         room, _ = make_room(1)
@@ -409,6 +424,21 @@ class TestDailyPipeline:
         p.bank = 200000
         engine._roll_hacker(ScriptRng([0, 8, 3]), p, ev2 := [])  # 3 % 3 == 0 -> 加
         assert p.bank == 220000
+
+    def test_hacker_off_by_default_like_original(self):
+        """原版每局默认不开黑客（OnNewGame 置 FALSE），未配置时不该触发。"""
+        script = [1] * 23 + [25, 0]  # 4 白捡+12 健康+7 破财全错过，第 24 次命中黑客判定
+        room, _ = make_room(1)
+        p = room.players["u0"]
+        p.bank = 50000
+        engine._process_player_day(room, ScriptRng(list(script)), p)
+        assert p.bank == 50500  # 仅日息 1%，黑客未触发
+
+        room2, _ = make_room(1, settings={"enable_hacker": True})
+        p2 = room2.players["u0"]
+        p2.bank = 50000
+        engine._process_player_day(room2, ScriptRng(list(script)), p2)
+        assert p2.bank == 50500 + 50500  # 结息后再被黑客塞满 bank//(1+0)
 
     def test_thug_when_debt_high(self):
         room, r = make_room(1)

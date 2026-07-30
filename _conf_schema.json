@@ -32,8 +32,8 @@
   "enable_hacker": {
     "description": "黑客入侵银行事件",
     "type": "bool",
-    "hint": "原版彩蛋：存款可能被黑客改多或改少",
-    "default": true
+    "hint": "原版彩蛋：存款可能被黑客改多或改少。原版每局默认关闭、需在游戏设置里打开，这里保持一致",
+    "default": false
   },
   "intel_price": {
     "description": "小道消息价格（元）",
