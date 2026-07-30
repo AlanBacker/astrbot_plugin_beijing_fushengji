@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from conftest import ScriptRng
@@ -49,6 +50,39 @@ class FakeEvent:
 
     def image_result(self, path: str):
         return ("image", path)
+
+
+class FakeProvider:
+    """可编排的 LLM 供应商替身：script 里放 str（返回该文本）或 Exception（抛出）。"""
+
+    def __init__(self, script, pid="fake"):
+        self.script = list(script)
+        self.calls = 0
+        self._pid = pid
+
+    def meta(self):
+        return SimpleNamespace(id=self._pid)
+
+    async def text_chat(self, prompt="", system_prompt="", **kw):
+        self.calls += 1
+        item = self.script.pop(0) if self.script else RuntimeError("剧本用尽")
+        if isinstance(item, Exception):
+            raise item
+        return SimpleNamespace(completion_text=item)
+
+
+class FakeContext:
+    """只实现 _resolve_ai_providers 用到的两个查询。"""
+
+    def __init__(self, by_id=None, using=None):
+        self._by_id = by_id or {}
+        self._using = using
+
+    def get_provider_by_id(self, pid):
+        return self._by_id.get(pid)
+
+    def get_using_provider(self, umo=None):
+        return self._using
 
 
 def run(agen):
@@ -99,9 +133,10 @@ class TestLifecycle:
         # 非房主不能发车
         out = texts(run(plugin.cmd_start(ev("u2"))))
         assert "房主" in out
-        # 房主发车：确认文本 + 第 1 天日报（文本兜底）
+        # 房主发车：确认文本 + 第 1 天日报（文本兜底），日报上印着京城十站表
         out = texts(run(plugin.cmd_start(ev("u1"))))
         assert "第 1 天" in out and "今日行情" in out and "群雄座次" in out
+        assert "京城十站" in out and "苹果园" in out
         # 存档已落盘：清缓存后仍能继续
         plugin.rooms.clear()
         out = texts(run(plugin.cmd_panel(ev("u1"))))
@@ -150,7 +185,7 @@ class TestPlayFlow:
         out = texts(run(plugin.cmd_repay(ev("u1"), "100")))
         assert "还债" in out
         out = texts(run(plugin.cmd_go(ev("u1"), "不存在的地方")))
-        assert "这一站" in out
+        assert "这一站" in out and "1北京站" in out and "10苹果园" in out
 
     def test_full_game_to_settlement(self, plugin):
         self._start(plugin, ["u1", "u2"], days="5")
@@ -180,7 +215,7 @@ class TestPlayFlow:
         out = texts(run(plugin.cmd_board(ev("u1"))))
         assert "浮生龙虎榜" in out and "赖皮张" in out  # 空榜时展示祖传榜首
         out = texts(run(plugin.cmd_help(ev("u1"))))
-        assert "玩法速览" in out
+        assert "玩法速览" in out and "京城十站" in out
 
 
 # ---------------------------------------------------------------------------
@@ -206,3 +241,80 @@ class TestSkipAndIdle:
         run(plugin.cmd_start(ev("u1")))
         out = texts(run(plugin.cmd_panel(ev("u1"))))
         assert "天黑了还没动静" in out and "第 2 天" in out
+
+
+# ---------------------------------------------------------------------------
+# AI 说书人：指定供应商、累计重试、回退与失败提示
+# ---------------------------------------------------------------------------
+
+
+def _settle() -> "plugin_main.engine.Settlement":
+    e = plugin_main.engine
+    return e.Settlement(
+        days_total=5,
+        entries=[
+            e.SettleEntry(
+                uid="u1", name="张三", reason="normal", score=1000,
+                fame=90, fame_title="有口皆碑",
+            )
+        ],
+    )
+
+
+class TestAiEpilogue:
+    def _run(self, plugin, ctx, pid=""):
+        plugin.context = ctx
+        plugin.conf["ai_provider_id"] = pid
+        plugin.ai_retry_delay = 0  # 测试不真睡
+        return asyncio.run(plugin._ai_epilogue(ev("u1"), _settle()))
+
+    def test_configured_provider_first_try(self, plugin):
+        good = FakeProvider(["各回各家咯"], pid="gpt")
+        text = self._run(plugin, FakeContext(by_id={"gpt": good}), pid="gpt")
+        assert "说书人收场白" in text and "各回各家咯" in text
+        assert good.calls == 1
+
+    def test_retries_then_falls_back_to_session_default(self, plugin):
+        bad = FakeProvider([RuntimeError(f"超时{i}") for i in range(3)], pid="gpt")
+        backup = FakeProvider(["买定离手"])
+        text = self._run(plugin, FakeContext(by_id={"gpt": bad}, using=backup), pid="gpt")
+        assert "买定离手" in text
+        assert bad.calls == 3 and backup.calls == 1
+
+    def test_all_fail_yields_explicit_notice(self, plugin):
+        bad = FakeProvider([RuntimeError("炸")] * 3, pid="gpt")
+        backup = FakeProvider([RuntimeError("也炸")])
+        text = self._run(plugin, FakeContext(by_id={"gpt": bad}, using=backup), pid="gpt")
+        assert "AI 总结失败" in text
+        assert bad.calls == 3 and backup.calls == 1
+
+    def test_unknown_id_gives_session_default_full_tries(self, plugin):
+        backup = FakeProvider([RuntimeError("闪"), "尘埃落定"])
+        text = self._run(plugin, FakeContext(using=backup), pid="不存在的id")
+        assert "尘埃落定" in text
+        assert backup.calls == 2
+
+    def test_no_provider_at_all(self, plugin):
+        text = self._run(plugin, FakeContext())
+        assert "AI 总结失败" in text and "没有可用" in text
+
+    def test_empty_completion_counts_as_failure(self, plugin):
+        hollow = FakeProvider(["", "  ", ""])
+        text = self._run(plugin, FakeContext(using=hollow))
+        assert "AI 总结失败" in text
+        assert hollow.calls == 3
+
+    def test_settlement_emits_epilogue(self, plugin):
+        """走完整局：ai_comment 开启时结算图后追加收场白。"""
+        plugin.conf["ai_comment"] = True
+        plugin.context = FakeContext(using=FakeProvider(["有钱没钱，回家过年"]))
+        plugin.ai_retry_delay = 0
+        run(plugin.cmd_create(ev("u1"), "5"))
+        run(plugin.cmd_start(ev("u1")))
+        settled = ""
+        for _ in range(6):
+            out = texts(run(plugin.cmd_stay(ev("u1"))))
+            if "最终结算" in out:
+                settled = out
+                break
+        assert "说书人收场白" in settled and "回家过年" in settled

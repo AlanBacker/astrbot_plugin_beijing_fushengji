@@ -4,10 +4,16 @@
     - 模板数据只含纯文本/数字/列表/字典，不含任何 HTML 片段，
       因此无论渲染端是否开启 autoescape，输出都一致且安全；
     - 所有数字在 contexts 层预格式化为带千分位的字符串；
-    - 页面宽 760px，配色为旧报纸的纸黄 + 墨黑 + 朱砂红（涨红跌绿）。
+    - 页面宽 760px，配色为旧报纸的纸黄 + 墨黑 + 朱砂红（涨红跌绿）；
+    - <meta name="viewport"> 声明 760x240 视口：AstrBot 官方 t2i 服务会按它设定
+      截图视口，配合 full_page 让成图恰好贴住版面（宽 760，高随内容伸展），
+      与 render/__init__.py 里显式下发的 viewport_width/height 互为双保险。
 """
 
 from __future__ import annotations
+
+VIEWPORT_WIDTH = 760  # 与 body 宽一致 -> 成图两侧无留白
+VIEWPORT_HEIGHT = 240  # 远小于任何版面高度 -> full_page 高度=内容实际高度
 
 # ---------------------------------------------------------------------------
 # 公共样式与骨架
@@ -241,12 +247,20 @@ _SEAL = """
 """
 
 _HINTS = """
-{% if hints %}
+{% if hints or locmap %}
 <div class="hints">
+  {% if hints %}
   <div class="hints-h">◇ 常用命令（把「浮生记」二字带上）◇</div>
   <div class="hint-items">
     {% for h in hints %}<span><code>{{ h.cmd }}</code> <span class="hd">{{ h.desc }}</span></span>{% endfor %}
   </div>
+  {% endif %}
+  {% if locmap %}
+  <div class="hints-h"{% if hints %} style="margin-top:7px"{% endif %}>◇ 京城十站（如「浮生记 去 3」）◇</div>
+  <div class="hint-items">
+    {% for l in locmap %}<span><code>{{ l.idx }}</code> <span class="hd">{{ l.name }}</span></span>{% endfor %}
+  </div>
+  {% endif %}
 </div>
 {% endif %}
 """
@@ -267,6 +281,7 @@ _FOOT = (
 def _doc(masthead: str, body: str) -> str:
     return (
         "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+        + f"<meta name='viewport' content='width={VIEWPORT_WIDTH}, height={VIEWPORT_HEIGHT}'>"
         + _CSS
         + "</head><body><div class='paper'><div class='frame'>"
         + masthead
@@ -487,6 +502,12 @@ _SEC_HELP = """
   </div>
 </div>
 {% endfor %}
+<div class="sec">
+  <div class="sec-h"><span class="tag">京城十站</span><span class="line"></span><span class="aside">{{ locs_aside }}</span></div>
+  <div class="hint-items" style="font-size:13.5px">
+    {% for l in locs %}<span><code>{{ l.idx }}</code> <span class="hd">{{ l.name }}</span></span>{% endfor %}
+  </div>
+</div>
 <div class="sec">
   <div class="sec-h"><span class="tag">货品一览</span><span class="line"></span><span class="aside">时价每天重开，低买高卖</span></div>
   <table class="mkt">

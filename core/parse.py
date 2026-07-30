@@ -44,20 +44,21 @@ def parse_good(token: str) -> int:
 def parse_location(token: str) -> int:
     """地点：支持序号(1-10)、全名、前缀。"""
     t = _norm(token)
+    menu = f"京城十站：{const.LOCATION_LINE}"
     if not t:
-        raise GameError("要指定去哪儿。", "例如「浮生记 去 西直门」或「浮生记 去 3」")
+        raise GameError("要指定去哪儿。", f"{menu}；如「浮生记 去 3」或「浮生记 去 西直门」。")
     if t.isdigit():
         idx = int(t) - 1
         if 0 <= idx < len(const.LOCATIONS):
             return idx
-        raise GameError(f"地点序号是 1~{len(const.LOCATIONS)}。")
+        raise GameError(f"地点序号是 1~{len(const.LOCATIONS)}。", f"{menu}。")
     for i, name in enumerate(const.LOCATIONS):
         if t == name.lower():
             return i
     hits = [i for i, name in enumerate(const.LOCATIONS) if name.lower().startswith(t)]
     if len(hits) == 1:
         return hits[0]
-    raise GameError(f"没有「{token}」这一站。", "发送「浮生记 面板」查看地点列表。")
+    raise GameError(f"没有「{token}」这一站。", f"{menu}。")
 
 
 def parse_qty(token: str) -> int | None:

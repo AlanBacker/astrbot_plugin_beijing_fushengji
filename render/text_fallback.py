@@ -42,9 +42,16 @@ def _card_lines(c: dict[str, Any]) -> list[str]:
 
 
 def _hint_lines(ctx: dict[str, Any]) -> list[str]:
-    if not ctx.get("hints"):
-        return []
-    return ["◇ 常用：" + "｜".join(h["cmd"].replace("浮生记 ", "") for h in ctx["hints"][:6]) + "（命令前加「浮生记」）"]
+    lines = []
+    if ctx.get("hints"):
+        lines.append(
+            "◇ 常用：" + "｜".join(h["cmd"].replace("浮生记 ", "") for h in ctx["hints"][:6]) + "（命令前加「浮生记」）"
+        )
+    if ctx.get("locmap"):
+        lines.append(
+            "◇ 京城十站：" + " ".join(f"{l['idx']}{l['name']}" for l in ctx["locmap"]) + "（如「浮生记 去 3」）"
+        )
+    return lines
 
 
 def day_text(ctx: dict[str, Any]) -> str:
@@ -118,6 +125,9 @@ def help_text(ctx: dict[str, Any]) -> str:
     for grp in ctx["groups"]:
         lines.append(f"◇ {grp['title']}")
         lines += [f"  {c['cmd']}｜{c['desc']}" for c in grp["cmds"]]
+    lines.append(
+        "◇ 京城十站：" + " ".join(f"{l['idx']}{l['name']}" for l in ctx["locs"]) + f"（{ctx['locs_aside']}）"
+    )
     lines.append("◇ 货品（常见价位）")
     lines += [f"  {g['idx']}. {g['name']}：{g['range']}（{g['note']}）" for g in ctx["goods"]]
     return "\n".join(lines)

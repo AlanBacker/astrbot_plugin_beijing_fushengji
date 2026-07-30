@@ -34,6 +34,9 @@ _NO_GAME_TEXT = (
     "💡 发送「浮生记 创建」开一局，「浮生记 帮助」看玩法说明书。"
 )
 
+AI_TRIES = 3  # 说书人首选供应商的累计尝试次数（含第一次）
+AI_TIMEOUT = 30  # 单次生成的超时（秒）
+
 # 输出指令：("text", str) / ("image", tmpl, ctx, fallback_fn) / ("epilogue", settlement)
 _Out = tuple[Any, ...]
 
@@ -48,6 +51,7 @@ class BeijingFushengji(Star):
         self.rng = random.Random()
         self.rooms: dict[str, Room] = {}
         self.locks: dict[str, asyncio.Lock] = {}
+        self.ai_retry_delay: float = 1.5  # AI 点评重试间隔（秒），测试置 0
 
     async def initialize(self) -> None:
         logger.info(f"[浮生记] 插件已加载，数据目录：{self.store.base_dir}")
@@ -148,7 +152,7 @@ class BeijingFushengji(Star):
             elif out[0] == "epilogue":
                 text = await self._ai_epilogue(event, out[1])
                 if text:
-                    yield event.plain_result(f"📜 说书人收场白：{text}")
+                    yield event.plain_result(text)
 
     async def _picture(
         self, event: AstrMessageEvent, tmpl: str, ctx: dict, fallback: Callable[[dict], str]
@@ -167,32 +171,86 @@ class BeijingFushengji(Star):
                 logger.warning(f"[浮生记] 图片渲染失败，降级为文字：{e}")
         yield event.plain_result(fallback(ctx))
 
-    async def _ai_epilogue(self, event: AstrMessageEvent, s: engine.Settlement) -> str:
-        """结算后的 LLM 一句话点评（可选功能，任何异常都静默跳过）。"""
+    def _resolve_ai_providers(self, umo: str) -> list[tuple[Any, int]]:
+        """说书人的供应商梯队：[(供应商, 尝试次数)]。
+
+        配置里指定了 ai_provider_id 且可用 -> 它试 AI_TRIES 次，会话默认模型兜底 1 次；
+        未指定/指定的不可用 -> 会话默认模型就是首选，试 AI_TRIES 次。
+        """
+        pid = str(self._cfg("ai_provider_id", "") or "").strip()
+        primary = None
+        if pid:
+            try:
+                cand = self.context.get_provider_by_id(pid)
+            except Exception:
+                cand = None
+            if cand is not None and hasattr(cand, "text_chat"):
+                primary = cand
+            else:
+                logger.warning(f"[浮生记] 配置的说书人供应商「{pid}」不可用，改用当前会话模型。")
         try:
-            provider = self.context.get_using_provider(event.unified_msg_origin)
-            if provider is None:
-                return ""
-            brief = "；".join(
-                f"{contexts.clean_name(e.name)}（{contexts.REASON_LABELS.get(e.reason, e.reason)}，"
-                + ("身故" if e.score is None else f"身家{e.score}元")
-                + "）"
-                for e in s.entries
-            )
-            resp = await asyncio.wait_for(
-                provider.text_chat(
-                    prompt=f"对局结果：{brief}。请给出收场白。",
-                    system_prompt=(
-                        "你是《北京浮生记》游戏里的老北京说书人，看完一局倒买倒卖的浮生百态。"
-                        "用一两句京味儿白话点评这局结果，不超过60字，只输出点评本身。"
-                    ),
-                ),
-                timeout=30,
-            )
-            return (resp.completion_text or "").strip()[:120]
+            fallback = self.context.get_using_provider(umo)
         except Exception as e:
-            logger.debug(f"[浮生记] AI 点评生成失败（已跳过）：{e}")
-            return ""
+            logger.warning(f"[浮生记] 获取会话默认模型失败：{e}")
+            fallback = None
+        plan: list[tuple[Any, int]] = []
+        if primary is not None:
+            plan.append((primary, AI_TRIES))
+        if fallback is not None and fallback is not primary:
+            plan.append((fallback, 1 if plan else AI_TRIES))
+        return plan
+
+    async def _ai_epilogue(self, event: AstrMessageEvent, s: engine.Settlement) -> str:
+        """结算后的 LLM 一句话点评。
+
+        指定供应商累计失败 AI_TRIES 次后回退到会话默认模型；全都失败时
+        明确提示「AI 总结失败」，不静默吞掉。
+        """
+        try:
+            plan = self._resolve_ai_providers(event.unified_msg_origin)
+        except Exception as e:  # 防御：self.context 形态异常
+            logger.warning(f"[浮生记] 说书人供应商解析失败：{e}")
+            plan = []
+        if not plan:
+            return (
+                "⚠️ AI 总结失败：没有可用的大模型供应商。\n"
+                "💡 在插件配置里用 ai_provider_id 指定一个，或在 WebUI 配好默认对话模型。"
+            )
+        brief = "；".join(
+            f"{contexts.clean_name(e.name)}（{contexts.REASON_LABELS.get(e.reason, e.reason)}，"
+            + ("身故" if e.score is None else f"身家{e.score}元")
+            + "）"
+            for e in s.entries
+        )
+        prompt = f"对局结果：{brief}。请给出收场白。"
+        system_prompt = (
+            "你是《北京浮生记》游戏里的老北京说书人，看完一局倒买倒卖的浮生百态。"
+            "用一两句京味儿白话点评这局结果，不超过60字，只输出点评本身。"
+        )
+        last_err = ""
+        for provider, tries in plan:
+            try:
+                label = provider.meta().id
+            except Exception:
+                label = provider.__class__.__name__
+            for attempt in range(1, tries + 1):
+                try:
+                    resp = await asyncio.wait_for(
+                        provider.text_chat(prompt=prompt, system_prompt=system_prompt),
+                        timeout=AI_TIMEOUT,
+                    )
+                    text = (getattr(resp, "completion_text", "") or "").strip()
+                    if text:
+                        return f"📜 说书人收场白：{text[:120]}"
+                    raise RuntimeError("模型返回了空内容")
+                except Exception as e:
+                    last_err = str(e) or type(e).__name__
+                    logger.warning(
+                        f"[浮生记] AI 点评失败（{attempt}/{tries}，供应商 {label}）：{e}"
+                    )
+                    if attempt < tries and self.ai_retry_delay > 0:
+                        await asyncio.sleep(self.ai_retry_delay)
+        return f"⚠️ AI 总结失败：{last_err[:80]}\n💡 说书人今儿嗓子哑了，各位的战绩以上面的结算特刊为准。"
 
     # ------------------------------------------------------------------
     # 统一调度

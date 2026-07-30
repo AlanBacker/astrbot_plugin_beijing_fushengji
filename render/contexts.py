@@ -70,6 +70,9 @@ HINTS_AFTER = [
     {"cmd": "浮生记 帮助", "desc": "玩法说明书"},
 ]
 
+# 京城十站速查（对局中的版面都带上，玩家不用翻说明书）
+LOC_CHIPS = [{"idx": i + 1, "name": n} for i, n in enumerate(const.LOCATIONS)]
+
 
 def _market_rows(room: Room, viewer: Player | None) -> list[dict[str, Any]]:
     impact_on = bool(room.setting("market_impact", True))
@@ -198,6 +201,7 @@ def day_context(room: Room, reports: list[DayReport]) -> dict[str, Any]:
         "cards_title": "群雄座次",
         "cards_aside": "按身家排座（身家 = 现金+存款+存货-债务）",
         "hints": HINTS_PLAY,
+        "locmap": LOC_CHIPS,
         "foot_left": f"《北京浮生记》 第 {last.day}/{last.days_total} 天",
     }
 
@@ -220,6 +224,7 @@ def rank_context(room: Room) -> dict[str, Any]:
         "cards_title": "群雄座次",
         "cards_aside": "按身家排座（身家 = 现金+存款+存货-债务）",
         "hints": HINTS_PLAY,
+        "locmap": LOC_CHIPS,
         "foot_left": f"《北京浮生记》 第 {room.day}/{room.days_total} 天",
     }
 
@@ -270,6 +275,7 @@ def panel_context(room: Room, uid: str) -> dict[str, Any]:
         "headlines": list(room.headlines),
         "notes": [],
         "hints": HINTS_PLAY,
+        "locmap": LOC_CHIPS,
         "foot_left": f"《北京浮生记》 {name} 的账本",
     }
 
@@ -423,6 +429,8 @@ def help_context() -> dict[str, Any]:
         "slogan_right": "也可用「fs」「浮生」简写",
         "intro": intro,
         "groups": groups,
+        "locs": LOC_CHIPS,
+        "locs_aside": "「去 序号」或「去 站名」均可；行情每天重开，与身在哪站无关",
         "goods": goods,
         "hints": [],
         "foot_left": "《北京浮生记》 说明书",

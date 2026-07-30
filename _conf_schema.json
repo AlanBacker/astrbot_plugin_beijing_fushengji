@@ -50,7 +50,13 @@
   "ai_comment": {
     "description": "结算后 AI 说书人点评",
     "type": "bool",
-    "hint": "结算图之后追加一句由当前 LLM 提供商生成的京味收场白；未配置提供商时自动跳过",
+    "hint": "结算图之后追加一句由 LLM 生成的京味收场白；供应商可用下面的 ai_provider_id 指定",
     "default": false
+  },
+  "ai_provider_id": {
+    "description": "AI 说书人指定供应商 ID",
+    "type": "string",
+    "hint": "留空 = 跟随当前会话的默认模型。ID 见 WebUI「服务提供商」页；指定的供应商累计失败 3 次后自动回退到会话默认模型，仍失败会在群里明确提示 AI 总结失败",
+    "default": ""
   }
 }

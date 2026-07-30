@@ -45,6 +45,12 @@ class TestParseLocation:
         with pytest.raises(GameError):
             parse.parse_location(token)
 
+    @pytest.mark.parametrize("token", ["", "11", "火星"])
+    def test_error_hint_carries_station_menu(self, token):
+        with pytest.raises(GameError) as ei:
+            parse.parse_location(token)
+        assert "北京站" in ei.value.hint and "苹果园" in ei.value.hint
+
 
 class TestParseQty:
     def test_values(self):
