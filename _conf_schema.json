@@ -1,0 +1,56 @@
+{
+  "default_days": {
+    "description": "默认游戏天数",
+    "type": "int",
+    "hint": "「浮生记 创建」不带天数时使用，范围 5~99",
+    "default": 40
+  },
+  "max_players": {
+    "description": "每局人数上限",
+    "type": "int",
+    "hint": "1~4 人，单人也能玩",
+    "default": 4
+  },
+  "idle_hours": {
+    "description": "闲置自动跳天（小时）",
+    "type": "float",
+    "hint": "当天开始超过该时长仍有人未「去/留守」，下一条游戏命令会先把他们按「留守」处理；设为 0 关闭",
+    "default": 24
+  },
+  "force_text_mode": {
+    "description": "强制纯文本模式",
+    "type": "bool",
+    "hint": "开启后不渲染图片，全部改用文字战报（图片渲染失败时本来也会自动降级为文字）",
+    "default": false
+  },
+  "market_impact": {
+    "description": "玩法创新：买卖冲击行情",
+    "type": "bool",
+    "hint": "同一商品当天的净买入/卖出每满 25,000 元，时价 ±5%（上限 ±30%）——多人同局的博弈核心",
+    "default": true
+  },
+  "enable_hacker": {
+    "description": "黑客入侵银行事件",
+    "type": "bool",
+    "hint": "原版彩蛋：存款可能被黑客改多或改少",
+    "default": true
+  },
+  "intel_price": {
+    "description": "小道消息价格（元）",
+    "type": "int",
+    "hint": "网吧「浮生记 情报」的开价",
+    "default": 500
+  },
+  "intel_accuracy": {
+    "description": "小道消息准确率（%）",
+    "type": "int",
+    "hint": "0~100；真消息会让预言的暴涨/暴跌在次日兑现",
+    "default": 75
+  },
+  "ai_comment": {
+    "description": "结算后 AI 说书人点评",
+    "type": "bool",
+    "hint": "结算图之后追加一句由当前 LLM 提供商生成的京味收场白；未配置提供商时自动跳过",
+    "default": false
+  }
+}
