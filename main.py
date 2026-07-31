@@ -87,6 +87,7 @@ class BeijingFushengji(Star):
         self.rooms: dict[str, Room] = {}
         self.locks: dict[str, asyncio.Lock] = {}
         self.ai_retry_delay: float = 1.5  # AI 点评重试间隔（秒），测试置 0
+        self._soften_bare_wake_word()
 
     async def initialize(self) -> None:
         logger.info(f"[浮生记] 插件已加载，数据目录：{self.store.base_dir}")
@@ -398,6 +399,65 @@ class BeijingFushengji(Star):
 
     # ---- 输错命令兜底 ----
 
+    def _soften_bare_wake_word(self) -> None:
+        """把指令组过滤器包一层：光发「浮生记」不再由框架报「参数不足」。
+
+        框架对「消息恰好等于指令组名」的处理是抛错并甩出原始指令树，观感
+        生硬。软化成按未命中放行后，这条消息会落到 guard_typo，由它回复
+        带本群进度的开场引导。框架内部结构对不上时放弃软化（只记日志），
+        最多退回框架默认提示，不影响任何命令。
+        """
+        try:
+            from astrbot.core.star.filter.command_group import CommandGroupFilter
+            from astrbot.core.star.star_handler import star_handlers_registry
+
+            group_filters = [
+                f
+                for h in star_handlers_registry.get_handlers_by_module_name(__name__)
+                for f in getattr(h, "event_filters", [])
+                if isinstance(f, CommandGroupFilter)
+                and f.parent_group is None
+                and f.group_name == WAKE_WORDS[0]
+            ]
+            for gf in group_filters:
+                if getattr(gf, "_fusheng_bare_softened", False):
+                    continue  # 插件重载会重进这里，别套两层
+                orig = gf.filter
+
+                def _quiet(event, cfg, _gf=gf, _orig=orig):
+                    if _gf.equals(event.message_str.strip()):
+                        return False  # 裸唤醒词：这里不响，guard_typo 来引导
+                    return _orig(event, cfg)
+
+                gf.filter = _quiet
+                gf._fusheng_bare_softened = True
+            if not group_filters:
+                logger.warning("[浮生记] 未找到指令组过滤器，裸唤醒词仍走框架默认提示")
+        except Exception as e:
+            logger.warning(f"[浮生记] 裸唤醒词引导未接管（框架结构变动？）：{e}")
+
+    def _welcome_text(self, event: AstrMessageEvent) -> str:
+        """裸唤醒词的开场引导：按本群进度给眼下最该用的几条命令。"""
+        try:
+            room = self._load(event.unified_msg_origin)
+        except Exception:  # 引导不能反过来砸场子
+            room = None
+        if room is not None and room.phase == PHASE_SIGNUP:
+            cap = room.setting("max_players", const.MAX_PLAYERS)
+            return (
+                f"🚉 本群一局候车中（{len(room.players)}/{cap} 人）。\n"
+                "💡 「浮生记 加入」上车｜房主「浮生记 开始」发车｜「浮生记 帮助」玩法说明书"
+            )
+        if room is not None and room.phase == PHASE_RUNNING:
+            return (
+                f"🀄 本局进行到第 {room.day}/{room.days_total} 天。\n"
+                "💡 「浮生记 面板」看账本行情｜「浮生记 排行」看战况｜「浮生记 帮助」全部命令"
+            )
+        return (
+            "🀄 《北京浮生记》——揣 2000 块现金、背 5500 高利贷进京，限期倒买倒卖攒身家。\n"
+            "💡 「浮生记 创建 [天数]」开新局｜「浮生记 帮助」玩法说明书｜「浮生记 榜单」历史龙虎榜"
+        )
+
     @staticmethod
     def _closest_subcommand(sub: str) -> str:
         """给输错的子命令找最接近的本名；找不到返回空串。"""
@@ -411,18 +471,25 @@ class BeijingFushengji(Star):
 
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def guard_typo(self, event: AstrMessageEvent):
-        """唤醒词后面跟了不认识的子命令 -> 当场报错并终止事件，不透传给 LLM。
+        """唤醒词开头但不成命令的消息 -> 当场给提示并终止事件，不透传给 LLM。
 
-        只认「第一个词恰好是唤醒词」的消息，像「浮生记真好玩」这类闲聊照旧
-        归大模型；光发一个唤醒词时框架自会回复完整指令树，这里也不插手。
+        三种情形：光发唤醒词（回一版按本群进度定制的开场引导，替代框架
+        生硬的「参数不足」指令树，过滤器已在 __init__ 里软化）；子命令
+        打错（报错并给最接近的纠正建议）；唤醒词大小写写岔（提示小写）。
+        「浮生记真好玩」这类闲聊不是命令格式，照旧归大模型接茬。
         """
         if not getattr(event, "is_at_or_wake_command", False):
             return  # 没唤醒机器人的消息不归我们管
         tokens = str(getattr(event, "message_str", "") or "").split()
-        if len(tokens) < 2:
+        if not tokens:
             return
-        head, sub = tokens[0], tokens[1]
+        head = tokens[0]
+        sub = tokens[1] if len(tokens) > 1 else ""
         if head in WAKE_WORDS:
+            if not sub:
+                yield event.plain_result(self._welcome_text(event))
+                event.stop_event()
+                return
             if sub in _SUB_TO_CANON:
                 return  # 正经命令，由对应 handler 处理
             guess = self._closest_subcommand(sub)
@@ -433,7 +500,7 @@ class BeijingFushengji(Star):
             )
             event.stop_event()
         elif head.lower() == "fs":  # 大小写写岔的 fs：命令同样不会执行，一并拦下提示
-            guess = _SUB_TO_CANON.get(sub) or self._closest_subcommand(sub)
+            guess = (_SUB_TO_CANON.get(sub) or self._closest_subcommand(sub)) if sub else ""
             hint = f"「浮生记 {guess}」" if guess else "「浮生记 帮助」"
             yield event.plain_result(
                 f"❓ 唤醒词「{head[:12]}」要写成小写「fs」（或「浮生记」）。\n"

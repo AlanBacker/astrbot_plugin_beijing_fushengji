@@ -271,9 +271,9 @@ class TestTypoGuard:
         assert run(plugin.guard_typo(e)) == []
         assert not e.is_stopped()
 
-    @pytest.mark.parametrize("msg", ["fs", "浮生记", "浮生记真好玩 啊", "今天 买 什么好"])
-    def test_bare_wake_word_and_chatter_are_left_alone(self, plugin, msg):
-        # 光一个唤醒词由框架回复指令树；首词不是唤醒词的闲聊照旧归 LLM
+    @pytest.mark.parametrize("msg", ["浮生记真好玩 啊", "今天 买 什么好"])
+    def test_chatter_is_left_alone(self, plugin, msg):
+        # 首词不是唤醒词的闲聊照旧归 LLM（裸唤醒词见 TestBareWakeWord）
         e = wake_ev(msg)
         assert run(plugin.guard_typo(e)) == []
         assert not e.is_stopped()
@@ -310,6 +310,60 @@ class TestTypoGuard:
         assert group_names == set(plugin_main.WAKE_WORDS)
         expected = {k: tuple(sorted(v)) for k, v in plugin_main.SUBCOMMANDS.items()}
         assert registered == expected
+
+
+class TestBareWakeWord:
+    """光发唤醒词：回带本群进度的开场引导，替代框架生硬的「参数不足」树。"""
+
+    @pytest.mark.parametrize("word", ["浮生记", "fs", "浮生"])
+    def test_no_game_intros_create(self, plugin, word):
+        e = wake_ev(word)
+        out = texts(run(plugin.guard_typo(e)))
+        assert "浮生记 创建" in out and "浮生记 帮助" in out
+        assert e.is_stopped()
+
+    def test_signup_points_to_join_and_start(self, plugin):
+        run(plugin.cmd_create(ev("u1"), "10"))
+        out = texts(run(plugin.guard_typo(wake_ev("浮生记"))))
+        assert "浮生记 加入" in out and "浮生记 开始" in out
+        assert "1/4 人" in out  # 报名进度
+
+    def test_running_points_to_panel(self, plugin):
+        run(plugin.cmd_create(ev("u1"), "10"))
+        run(plugin.cmd_start(ev("u1")))
+        out = texts(run(plugin.guard_typo(wake_ev("fs"))))
+        assert "第 1/10 天" in out and "浮生记 面板" in out
+
+    def test_bare_miscased_fs_hints_lowercase(self, plugin):
+        e = wake_ev("FS")
+        out = texts(run(plugin.guard_typo(e)))
+        assert "小写「fs」" in out and "浮生记 帮助" in out
+        assert e.is_stopped()
+
+    def test_unwoken_bare_word_ignored(self, plugin):
+        e = wake_ev("浮生记", woken=False)
+        assert run(plugin.guard_typo(e)) == []
+        assert not e.is_stopped()
+
+    def test_group_filter_softened_no_raise(self, plugin):
+        """框架层：消息恰好等于组名/别名时按未命中放行，不再抛「参数不足」。"""
+        from astrbot.core.star.filter.command_group import CommandGroupFilter
+        from astrbot.core.star.star_handler import star_handlers_registry
+
+        gfs = [
+            f
+            for md in star_handlers_registry.get_handlers_by_module_name(
+                plugin_main.__name__
+            )
+            for f in md.event_filters
+            if isinstance(f, CommandGroupFilter) and f.parent_group is None
+        ]
+        assert gfs, "指令组过滤器应已注册"
+        for gf in gfs:
+            for word in plugin_main.WAKE_WORDS:
+                assert gf.filter(wake_ev(word), None) is False  # 不抛、不响
+            # 正常带子命令的消息照旧命中指令组
+            assert gf.filter(wake_ev("浮生记 创建 10"), None) is True
 
 
 # ---------------------------------------------------------------------------
