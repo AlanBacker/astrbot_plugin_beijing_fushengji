@@ -312,6 +312,7 @@ def settle_context(settlement: Settlement) -> dict[str, Any]:
                 "fame": e.fame,
                 "fame_title": e.fame_title,
                 "achievements": list(e.achievements),
+                "verdict": e.market_verdict,
                 "board": (
                     f"杀进浮生龙虎榜第 {e.board_rank} 名！" if e.board_rank else ""
                 ),
@@ -320,12 +321,16 @@ def settle_context(settlement: Settlement) -> dict[str, Any]:
                 ),
             }
         )
+    played = settlement.days_played or settlement.days_total
     return {
         "kicker": "结 算 特 刊",
-        "sub": f"{settlement.days_total} 天浮生 · 一朝清账",
+        "sub": f"{settlement.days_total} 天浮生 · 行情{settlement.boom_label or '未知'} · 一朝清账",
         "slogan_left": "身家 = 现金 + 存款 − 债务",
         "slogan_right": "愿赌服输 · 概不赊账",
         "settle_aside": "破产不上榜 · 身故不入流",
+        "boom_label": settlement.boom_label,
+        "boom_line": settlement.boom_line,
+        "boom_stat": f"{played} 天累计景气 {settlement.boom_total} 点",
         "entries": entries,
         "hints": HINTS_AFTER,
         "foot_left": "《北京浮生记》 结算特刊",

@@ -44,6 +44,8 @@ class PlayerStats:
     sold_shady: bool = False  # 卖过假白酒/假古董
     cafe_times: int = 0
     intel_times: int = 0
+    boom_seen: int = 0  # 在场天数里赶上的景气点（结算评行情用）
+    days_active: int = 0  # 能自由行动的天数（住院/离场不计）
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -55,6 +57,8 @@ class PlayerStats:
             "sold_shady": self.sold_shady,
             "cafe_times": self.cafe_times,
             "intel_times": self.intel_times,
+            "boom_seen": self.boom_seen,
+            "days_active": self.days_active,
         }
 
     @classmethod
@@ -185,6 +189,7 @@ class Room:
     price_marks: list[int] = field(default_factory=lambda: [0] * const.N_GOODS)  # 1涨/-1跌
     headlines: list[str] = field(default_factory=list)  # 今日新闻
     tip: Tip | None = None  # 已购买、指向明日的情报
+    boom_total: int = 0  # 本局累计景气点（价格事件带来的机遇总量）
     day_started_at: float = 0.0  # 当天开始的 unix 时间（闲置超时用）
     settings: dict[str, Any] = field(default_factory=dict)  # 创建时的配置快照
 
@@ -225,6 +230,7 @@ class Room:
             "price_marks": list(self.price_marks),
             "headlines": list(self.headlines),
             "tip": self.tip.to_dict() if self.tip else None,
+            "boom_total": self.boom_total,
             "day_started_at": self.day_started_at,
             "settings": dict(self.settings),
         }
@@ -232,7 +238,7 @@ class Room:
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Room":
         room = cls(room_id=d["room_id"], creator=d["creator"])
-        for k in ("phase", "day", "days_total", "day_started_at"):
+        for k in ("phase", "day", "days_total", "boom_total", "day_started_at"):
             if k in d:
                 setattr(room, k, d[k])
         room.players = {pd["uid"]: Player.from_dict(pd) for pd in d.get("players", [])}

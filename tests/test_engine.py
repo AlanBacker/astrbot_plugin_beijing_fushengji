@@ -8,7 +8,7 @@ import random
 import pytest
 from conftest import ScriptRng, everyone_stays, make_room, quiet_rng
 
-from core import const, engine
+from core import const, engine, market
 from core.errors import GameError
 from core.models import (
     FIN_DEAD,
@@ -589,6 +589,106 @@ class TestSettlement:
         assert board[0]["score"] == const.SEED_CHAMPION["score"]
 
 
+class TestBoomEvaluation:
+    """景气累计与结算动态评价：结算页（非 AI）算法本体。"""
+
+    def test_day_one_seeds_days_active(self):
+        room, _ = make_room(2, days=10)
+        assert all(p.stats.days_active == 1 for p in room.players.values())
+        assert room.boom_total == 0  # 第 1 天不掷价格事件
+
+    def test_boom_accrues_only_to_active_players(self):
+        room, r = make_room(2, days=10)
+        p0, p1 = room.players["u0"], room.players["u1"]
+        p1.status = ST_HOSPITAL
+        p1.hospital_days = 3
+        # 真情报保送古董 x8：翻天时事件必发，贡献 7 点景气
+        room.tip = market.make_tip(room, ScriptRng([0, 6]), accuracy_pct=75)
+        engine.move(room, r, "u0", None, 2000.0)
+        assert room.day == 2 and room.boom_total == 7
+        assert (p0.stats.boom_seen, p0.stats.days_active) == (7, 2)
+        # 躺医院的看得见吃不着：不计景气也不计在场天
+        assert (p1.stats.boom_seen, p1.stats.days_active) == (0, 1)
+
+    def test_settlement_rates_players_by_their_own_market(self):
+        room, r = make_room(2, days=5)
+        p0 = room.players["u0"]
+        p0.cash = 100_000
+        p0.stats.boom_seen = 40  # 个人赶上疯狂行情（5 天均 8 点）
+        room.boom_total = 40
+        while room.day < room.days_total:
+            everyone_stays(room, r)
+        res = everyone_stays(room, r)
+        s = res.settlement
+        assert s.days_played == 5 and s.boom_total == 40
+        assert s.boom_tier == 3 and s.boom_label == "疯狂"
+        assert s.boom_line == const.BOOM_TIER_LINES[3]
+        e0 = next(e for e in s.entries if e.uid == "u0")
+        e1 = next(e for e in s.entries if e.uid == "u1")
+        # u0：疯狂档大赚 -> 传奇；盈利按开局净身家 -3500 折算
+        assert e0.profit == e0.score - const.START_NET_WORTH
+        assert (e0.market_tier, e0.market_grade) == (3, 4)
+        assert e0.market_verdict == const.MARKET_VERDICTS[3][4]
+        assert (e0.boom_seen, e0.days_active) == (40, 5)
+        # u1：干等 5 天欠债离场 -> 个人档冷清，吃欠债评语
+        assert e1.score < 0 and e1.market_grade == const.GRADE_DEBT
+        assert e1.market_verdict == const.DEBT_VERDICTS[0]
+
+    def test_dead_player_gets_floor_verdict(self):
+        room, r = make_room(2, days=5)
+        room.players["u1"].health = -5
+        while room.day < room.days_total:
+            everyone_stays(room, r)
+        res = everyone_stays(room, r)
+        dead = next(e for e in res.settlement.entries if e.reason == FIN_DEAD)
+        assert dead.profit is None
+        assert dead.market_grade == const.GRADE_DEAD
+        assert dead.market_verdict == const.DEAD_VERDICT
+
+
+class TestMarketVerdictStandard:
+    """动态评价标准（const 层）：同样的钱对照不同行情给不同评级。"""
+
+    def test_boom_tier_cuts(self):
+        assert const.boom_tier(10, 10) == 0  # 100/天 < 105
+        assert const.boom_tier(11, 10) == 1  # 110 >= 105
+        assert const.boom_tier(17, 10) == 2  # 170 >= 165
+        assert const.boom_tier(26, 10) == 3  # 260 >= 260
+        assert const.boom_tier(0, 0) == 0  # 天数下限保护，不除零
+
+    def test_cold_small_win_beats_hot_small_win(self):
+        # 同样身家 2500（赚 6000）：冷清局评传奇，疯狂局降两级
+        cold = const.market_verdict(2500, 0, 10)
+        crazy = const.market_verdict(2500, 30, 10)
+        assert cold == (0, 4, const.MARKET_VERDICTS[0][4])
+        assert crazy[0] == 3 and crazy[1] < cold[1]
+
+    def test_hot_market_tiny_profit_called_out_but_above_floors(self):
+        # 40 天疯狂局只赚零头 -> 辜负行情；但仍高于欠债与身故两个垫底档
+        tier, grade, _ = const.market_verdict(1000, 120, 40)
+        assert (tier, grade) == (3, 0)
+        assert grade > const.GRADE_DEBT > const.GRADE_DEAD
+
+    def test_debt_floor_is_market_aware(self):
+        assert const.market_verdict(-1, 30, 10) == (
+            3, const.GRADE_DEBT, const.DEBT_VERDICTS[3],
+        )
+        assert const.market_verdict(-1, 0, 10)[2] == const.DEBT_VERDICTS[0]
+
+    def test_dead_floor(self):
+        tier, grade, text = const.market_verdict(None, 30, 10)
+        assert grade == const.GRADE_DEAD and text == const.DEAD_VERDICT
+
+    def test_expected_profit_monotonic(self):
+        # 基准盈利随景气档与天数单调不减（含 60 天外的线性外推区）
+        for days in (5, 8, 20, 45, 60, 90):
+            vals = [const.expected_profit(t, days) for t in range(4)]
+            assert vals == sorted(vals) and vals[0] > 0
+        for t in range(4):
+            vals = [const.expected_profit(t, d) for d in (5, 10, 20, 30, 40, 60, 90)]
+            assert vals == sorted(vals)
+
+
 class TestSerialization:
     def test_room_roundtrip(self):
         room, r = make_room(2, days=15, settings={"enable_hacker": False})
@@ -606,6 +706,19 @@ class TestSerialization:
     def test_player_defaults_on_missing_fields(self):
         p = Player.from_dict({"uid": "x", "name": "某人"})
         assert p.cash == const.START_CASH and p.status == ST_ACTIVE
+
+    def test_v11_save_without_boom_fields(self):
+        """v1.1.x 存档没有景气字段：读档默认 0，不炸不丢。"""
+        room, _ = make_room(1)
+        d = json.loads(json.dumps(room.to_dict(), ensure_ascii=False))
+        d.pop("boom_total")
+        for pd in d["players"]:
+            pd["stats"].pop("boom_seen")
+            pd["stats"].pop("days_active")
+        restored = Room.from_dict(d)
+        assert restored.boom_total == 0
+        st = restored.players["u0"].stats
+        assert st.boom_seen == 0 and st.days_active == 0
 
 
 class TestFuzz:

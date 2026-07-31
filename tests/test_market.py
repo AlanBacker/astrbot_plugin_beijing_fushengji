@@ -91,6 +91,39 @@ class TestPriceEvents:
         assert room.prices[4] == 1000 * 5 * 8
 
 
+class TestBoomPoints:
+    """景气点：价格事件折算成机遇量，供结算动态评价用。"""
+
+    def test_every_event_scores_positive(self):
+        # 暴涨 xN 记 N-1，暴跌 //N 也记 N-1（涨跌同权，经机器人模拟校准）
+        for ev in const.PRICE_EVENTS:
+            n = ev.mul or ev.div
+            assert const.boom_points(ev) == n - 1 > 0
+
+    def test_hits_accumulate_on_room(self):
+        room = _bare_room()
+        room.prices = [1000] * const.N_GOODS
+        vals = [1] * 14
+        vals[0] = 0  # 玩具 x2 -> 1 点
+        vals[6] = 0  # 古董 x8 -> 7 点
+        market.roll_price_events(room, ScriptRng(vals))
+        assert room.boom_total == 8
+
+    def test_delisted_hit_scores_nothing(self):
+        room = _bare_room()
+        room.prices = [100] * const.N_GOODS
+        room.prices[5] = 0  # 玩具未上市，事件空放，不算机遇
+        market.roll_price_events(room, ScriptRng([0] + [1] * 13))
+        assert room.boom_total == 0
+
+    def test_tip_forced_event_counts(self):
+        room = _bare_room()
+        room.prices = [100] * const.N_GOODS
+        room.tip = market.make_tip(room, ScriptRng([0, 6]), accuracy_pct=75)  # 古董 x8
+        market.roll_price_events(room, ScriptRng([1] * 14))
+        assert room.boom_total == 7
+
+
 class TestTip:
     def test_truthful_tip_forces_event(self):
         room = _bare_room()

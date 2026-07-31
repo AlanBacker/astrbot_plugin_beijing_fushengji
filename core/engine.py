@@ -65,12 +65,26 @@ class SettleEntry:
     score_title: str = ""  # 上榜称号（正分才有）
     achievements: list[str] = field(default_factory=list)
     board_rank: int | None = None  # 进入历史榜的名次（main 合榜后回填）
+    # ---- 本局景气动态评价 ----
+    profit: int | None = None  # 盈利 = 身家 - 开局净身家(-3500)；身故为 None
+    boom_seen: int = 0  # 在场天数里赶上的景气点
+    days_active: int = 0  # 能自由行动的天数
+    trades: int = 0  # 成交笔数
+    market_tier: int = 0  # 个人景气档 0..3
+    market_grade: int = 0  # 评级 0..4；欠债 -1、身故 -2（const.GRADE_*）
+    market_verdict: str = ""  # 行情对照评语
 
 
 @dataclass
 class Settlement:
     days_total: int
     entries: list[SettleEntry] = field(default_factory=list)
+    # ---- 本局景气 ----
+    days_played: int = 0  # 实际进行到的天数
+    boom_total: int = 0  # 全局累计景气点
+    boom_tier: int = 0  # 本局景气档 0..3
+    boom_label: str = ""  # 档位名（冷清/平淡/红火/疯狂）
+    boom_line: str = ""  # 结算页顶部的一句话行情总结
 
 
 @dataclass
@@ -133,6 +147,7 @@ def start_game(room: Room, rng: random.Random, uid: str, now_ts: float) -> Actio
     market.generate_prices(room, rng)
     for p in room.players.values():
         p.net_worth_yesterday = p.net_worth(room.prices)
+        p.stats.days_active = 1  # 第 1 天开门就能交易（当天无价格事件）
     return ActionResult(
         lines=[f"🚩 第 1 天，{const.LOCATIONS[const.START_LOCATION]}。列车到站，各凭本事。"]
     )
@@ -525,8 +540,10 @@ def _advance_day(room: Room, rng: random.Random, now_ts: float, result: ActionRe
 
     # 3. 新一天：行情与房间级价格事件
     market.generate_prices(room, rng)
+    boom_before = room.boom_total
     headlines = market.roll_price_events(room, rng)
     room.headlines = headlines
+    day_boom = room.boom_total - boom_before
 
     report = DayReport(day=room.day, days_total=room.days_total, headlines=headlines)
 
@@ -540,6 +557,10 @@ def _advance_day(room: Room, rng: random.Random, now_ts: float, result: ActionRe
         p.net_worth_yesterday = nw
         if events:
             report.player_events.append((p.name, events))
+        if p.status == ST_ACTIVE:
+            # 只有今天能自由行动的人才算赶上了这波行情（躺医院看得见吃不着）
+            p.stats.days_active += 1
+            p.stats.boom_seen += day_boom
 
     # 5. 全员离场则直接结算
     if not room.in_game_players():
@@ -759,7 +780,15 @@ def _achievements(p: Player) -> list[str]:
 
 
 def _settle(room: Room, rng: random.Random) -> Settlement:
-    settlement = Settlement(days_total=room.days_total)
+    days_played = min(room.day, room.days_total)
+    settlement = Settlement(
+        days_total=room.days_total,
+        days_played=days_played,
+        boom_total=room.boom_total,
+        boom_tier=const.boom_tier(room.boom_total, days_played),
+    )
+    settlement.boom_label = const.BOOM_TIER_LABELS[settlement.boom_tier]
+    settlement.boom_line = const.BOOM_TIER_LINES[settlement.boom_tier]
     for p in room.players.values():
         entry = SettleEntry(
             uid=p.uid,
@@ -768,6 +797,14 @@ def _settle(room: Room, rng: random.Random) -> Settlement:
             score=p.final_score,
             fame=p.fame,
             fame_title=fame_title(p.fame),
+            boom_seen=p.stats.boom_seen,
+            days_active=p.stats.days_active,
+            trades=p.stats.trades,
+        )
+        if p.final_score is not None:
+            entry.profit = p.final_score - const.START_NET_WORTH
+        entry.market_tier, entry.market_grade, entry.market_verdict = const.market_verdict(
+            p.final_score, p.stats.boom_seen, p.stats.days_active
         )
         if p.finish_reason != FIN_DEAD:
             if (p.final_score or 0) > 0:

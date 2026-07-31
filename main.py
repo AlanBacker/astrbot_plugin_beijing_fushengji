@@ -235,8 +235,68 @@ class BeijingFushengji(Star):
             plan.append((fallback, 1 if plan else AI_TRIES))
         return plan
 
+    @staticmethod
+    def _epilogue_prompts(s: engine.Settlement) -> tuple[str, str]:
+        """组装说书人的 (对局数据, 系统提示词)。
+
+        单人局与多人局各一套系统提示词；把数值规则与本局景气档位一并交给
+        模型，并要求按「对照行情评价」的标准说话——冷清局赚小钱可夸、
+        旺局只赚零头要点破、欠债与身故垫底但留口德，与结算页评语同一标准。
+        """
+        solo = len(s.entries) == 1
+        room_line = (
+            f"本局设定 {s.days_total} 天，实际进行 {s.days_played} 天，"
+            f"行情档位「{s.boom_label}」：{s.boom_line}"
+            f"（累计景气 {s.boom_total} 点；档位分冷清/平淡/红火/疯狂，"
+            "由当局暴涨暴跌事件的力度与密度决定，每局不同）。"
+        )
+        lines = []
+        for i, e in enumerate(s.entries, 1):
+            nm = contexts.clean_name(e.name)
+            reason = contexts.REASON_LABELS.get(e.reason, e.reason)
+            if e.score is None:
+                lines.append(f"{i}. {nm}：身故（健康耗尽客死京城，本局最低档结局）")
+                continue
+            grade = (
+                "欠债离场"
+                if e.market_grade == const.GRADE_DEBT
+                else const.GRADE_WORDS[e.market_grade]
+            )
+            lines.append(
+                f"{i}. {nm}：{reason}，身家 {e.score} 元（本局盈利 {e.profit} 元），"
+                f"在场 {e.days_active} 天赶上景气 {e.boom_seen} 点，成交 {e.trades} 笔，"
+                f"系统评级「{grade}」，参考评语：{e.market_verdict}"
+            )
+        mech = (
+            "规则背景：每人开局现金 2000 元、背高利贷 5500 元（日息 10%），存款日息 1%，"
+            "身家 = 现金 + 存款 + 存货 − 债务，排名只看身家。"
+        )
+        fair = (
+            "评价标准：必须对照本局行情说话——冷清局赚到小钱也是本事，值得夸；"
+            "红火、疯狂局只赚零头就该点破（留情面）；欠债离场与身故是垫底档，"
+            "身故最低，但对倒霉人别刻薄。系统评级已按此标准算好，态度以它为准。"
+        )
+        if solo:
+            system_prompt = (
+                "你是《北京浮生记》里的老北京说书人，单人局收场，台下坐着唯一的主角。"
+                f"{mech}{fair}"
+                "用京味儿白话给主角一段收场白：先一句定调（对照行情夸或损），"
+                "再点一处最出彩或最遗憾的地方。不超过 60 字，只输出收场白本身，"
+                "别复述数字，别加引号。"
+            )
+        else:
+            system_prompt = (
+                "你是《北京浮生记》里的老北京说书人，多人局收场，要当众盘点各位的成色。"
+                f"{mech}{fair}"
+                "用京味儿白话点评：头名要点出，垫底的调侃两句（留情面），中间的可一笔带过；"
+                "谁高谁低以系统评级为准，别只看身家大小。不超过 90 字，"
+                "只输出点评本身，别复述数字，别加引号。"
+            )
+        prompt = f"{room_line}\n结算名单：\n" + "\n".join(lines) + "\n请给出收场白。"
+        return prompt, system_prompt
+
     async def _ai_epilogue(self, event: AstrMessageEvent, s: engine.Settlement) -> str:
-        """结算后的 LLM 一句话点评。
+        """结算后的 LLM 收场白（单人/多人两套提示词，含机制与行情标准）。
 
         指定供应商累计失败 AI_TRIES 次后回退到会话默认模型；全都失败时
         明确提示「AI 总结失败」，不静默吞掉。
@@ -251,17 +311,7 @@ class BeijingFushengji(Star):
                 "⚠️ AI 总结失败：没有可用的大模型供应商。\n"
                 "💡 在插件配置里用 ai_provider_id 指定一个，或在 WebUI 配好默认对话模型。"
             )
-        brief = "；".join(
-            f"{contexts.clean_name(e.name)}（{contexts.REASON_LABELS.get(e.reason, e.reason)}，"
-            + ("身故" if e.score is None else f"身家{e.score}元")
-            + "）"
-            for e in s.entries
-        )
-        prompt = f"对局结果：{brief}。请给出收场白。"
-        system_prompt = (
-            "你是《北京浮生记》游戏里的老北京说书人，看完一局倒买倒卖的浮生百态。"
-            "用一两句京味儿白话点评这局结果，不超过60字，只输出点评本身。"
-        )
+        prompt, system_prompt = self._epilogue_prompts(s)
         last_err = ""
         for provider, tries in plan:
             try:
@@ -276,7 +326,7 @@ class BeijingFushengji(Star):
                     )
                     text = (getattr(resp, "completion_text", "") or "").strip()
                     if text:
-                        return f"📜 说书人收场白：{text[:120]}"
+                        return f"📜 说书人收场白：{text[:160]}"
                     raise RuntimeError("模型返回了空内容")
                 except Exception as e:
                     last_err = str(e) or type(e).__name__

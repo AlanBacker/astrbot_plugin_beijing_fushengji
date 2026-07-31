@@ -344,15 +344,88 @@ class TestSkipAndIdle:
 
 def _settle() -> "plugin_main.engine.Settlement":
     e = plugin_main.engine
+    c = plugin_main.const
     return e.Settlement(
         days_total=5,
+        days_played=5,
+        boom_total=9,
+        boom_tier=1,
+        boom_label=c.BOOM_TIER_LABELS[1],
+        boom_line=c.BOOM_TIER_LINES[1],
         entries=[
             e.SettleEntry(
                 uid="u1", name="张三", reason="normal", score=1000,
                 fame=90, fame_title="有口皆碑",
+                profit=4500, boom_seen=9, days_active=5, trades=6,
+                market_tier=1, market_grade=2,
+                market_verdict=c.MARKET_VERDICTS[1][2],
             )
         ],
     )
+
+
+class TestEpiloguePrompts:
+    """说书人提示词：单人/多人两套，数值机制与行情评价标准都要交代。"""
+
+    def test_solo_prompt(self, plugin):
+        prompt, sysp = plugin._epilogue_prompts(_settle())
+        assert "单人局" in sysp and "多人局" not in sysp
+        assert "不超过 60 字" in sysp
+        # 数值机制交代：本金、利率、身家公式
+        assert "现金 2000" in sysp and "日息 10%" in sysp and "排名只看身家" in sysp
+        # 公平标准：对照行情说话，垫底档留口德
+        assert "冷清局赚到小钱也是本事" in sysp and "身故最低" in sysp
+        # 对局数据：行情档位 + 个人评级与参考评语
+        assert "行情档位「平淡」" in prompt
+        assert "张三" in prompt and "系统评级「稳健」" in prompt
+        assert plugin_main.const.MARKET_VERDICTS[1][2] in prompt
+
+    def test_multi_prompt_with_debt_and_dead(self, plugin):
+        c = plugin_main.const
+        e = plugin_main.engine
+        s = _settle()
+        s.entries.append(e.SettleEntry(
+            uid="u2", name="李四", reason="normal", score=-200,
+            fame=80, fame_title="口碑平平",
+            profit=3300, boom_seen=9, days_active=5, trades=2,
+            market_tier=1, market_grade=c.GRADE_DEBT,
+            market_verdict=c.DEBT_VERDICTS[1],
+        ))
+        s.entries.append(e.SettleEntry(
+            uid="u3", name="王五", reason="dead", score=None,
+            fame=60, fame_title="口碑平平",
+            market_grade=c.GRADE_DEAD, market_verdict=c.DEAD_VERDICT,
+        ))
+        prompt, sysp = plugin._epilogue_prompts(s)
+        assert "多人局" in sysp and "不超过 90 字" in sysp
+        assert "以系统评级为准" in sysp
+        assert "系统评级「欠债离场」" in prompt  # 李四：欠债有专门评级词
+        assert "王五：身故" in prompt  # 死者单独一行，不套盈利句式
+
+
+class TestSettleVerdictOutput:
+    """结算页（非 AI 路径）：行情条与每人一行评语要落到用户可见输出。"""
+
+    def test_settle_context_and_text_fallback(self):
+        ctx = plugin_main.contexts.settle_context(_settle())
+        assert ctx["boom_label"] == "平淡"
+        assert ctx["boom_line"] == plugin_main.const.BOOM_TIER_LINES[1]
+        assert ctx["boom_stat"] == "5 天累计景气 9 点"
+        assert ctx["entries"][0]["verdict"] == plugin_main.const.MARKET_VERDICTS[1][2]
+        txt = plugin_main.text_fallback.settle_text(ctx)
+        assert "评｜" in txt and ctx["boom_line"] in txt
+
+    def test_full_game_settlement_shows_verdicts(self, plugin):
+        run(plugin.cmd_create(ev("u1"), "5"))
+        run(plugin.cmd_start(ev("u1")))
+        settled = ""
+        for _ in range(6):
+            out = texts(run(plugin.cmd_stay(ev("u1"))))
+            if "最终结算" in out:
+                settled = out
+                break
+        assert "本局行情" in settled and "累计景气" in settled
+        assert "评｜" in settled
 
 
 class TestAiEpilogue:

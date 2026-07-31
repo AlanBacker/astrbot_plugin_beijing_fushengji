@@ -94,9 +94,13 @@ def panel_text(ctx: dict[str, Any]) -> str:
 
 def settle_text(ctx: dict[str, Any]) -> str:
     lines = [f"🏁 最终结算（{ctx['sub']}）"]
+    if ctx.get("boom_line"):
+        lines.append(f"📈 {ctx['boom_line']}（{ctx['boom_stat']}）")
     for e in ctx["entries"]:
         score = e["score"] or e["score_alt"]
         lines.append(f"{e['rank']} {e['name']}｜{e['reason']}｜身家 {score}")
+        if e.get("verdict"):
+            lines.append(f"   评｜{e['verdict']}")
         extra = []
         if e["title"]:
             extra.append(f"称号「{e['title']}」")

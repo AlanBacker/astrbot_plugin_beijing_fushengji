@@ -44,11 +44,13 @@ def roll_price_events(room: Room, rng: random.Random) -> list[str]:
             if _apply_price_event(room, idx):
                 hit.add(idx)
                 headlines.append(ev.text)
+                room.boom_total += const.boom_points(ev)
 
     tip = room.tip
     if tip and tip.truthful and tip.event_idx >= 0 and tip.event_idx not in hit:
         if _apply_price_event(room, tip.event_idx):
             headlines.append(const.PRICE_EVENTS[tip.event_idx].text)
+            room.boom_total += const.boom_points(const.PRICE_EVENTS[tip.event_idx])
     room.tip = None  # 情报只管一天，无论真假均失效
     return headlines
 

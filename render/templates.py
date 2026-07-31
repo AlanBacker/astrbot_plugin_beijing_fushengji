@@ -198,6 +198,13 @@ _CSS = """
   .chip-ach { background: #8a6d3b; color: #f6efdc; padding: 1px 8px;
               border-radius: 2px; font-size: 12.5px; }
   .se-board { margin-top: 5px; color: #a53326; font-weight: 700; }
+  .boom-strip { display: flex; align-items: center; gap: 10px; margin-bottom: 10px;
+    border: 1px solid #2b2620; background: rgba(43,38,32,.05); padding: 6px 12px; font-size: 13.5px; }
+  .boom-tag { font-weight: 900; color: #a53326; border: 1px solid #a53326;
+    padding: 1px 8px; letter-spacing: 2px; white-space: nowrap; }
+  .boom-stat { margin-left: auto; color: #6b5f4d; font-size: 12px; white-space: nowrap; }
+  .se-verdict { margin-top: 2px; font-weight: 700; }
+  .se-verdict::before { content: "评｜"; color: #a53326; font-weight: 900; }
 
   /* ---- 帮助 ---- */
   .cmd-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 20px; }
@@ -439,6 +446,9 @@ TMPL_PANEL = _doc(
 _SEC_SETTLE = """
 <div class="sec">
   <div class="sec-h"><span class="tag red">最终结算</span><span class="line"></span><span class="aside">{{ settle_aside }}</span></div>
+  {% if boom_line %}
+  <div class="boom-strip"><span class="boom-tag">行情{{ boom_label }}</span><span class="boom-line">{{ boom_line }}</span><span class="boom-stat">{{ boom_stat }}</span></div>
+  {% endif %}
   {% for e in entries %}
   <div class="settle-entry{% if loop.first and e.champ %} champ{% endif %}">
     <div class="se-h">
@@ -448,6 +458,7 @@ _SEC_SETTLE = """
       <span class="se-score">{% if e.score %}<b{% if e.neg %} class="neg"{% endif %}>{{ e.score }}</b><small>结算身家（元）</small>{% else %}<b class="neg">{{ e.score_alt }}</b>{% endif %}</span>
     </div>
     <div class="se-body">
+      {% if e.verdict %}<div class="se-verdict">{{ e.verdict }}</div>{% endif %}
       <div class="se-row">
         {% if e.title %}<span class="chip-title">{{ e.title }}</span>{% endif %}
         <span class="k">名声</span><span>{{ e.fame_title }}（{{ e.fame }}）</span>
