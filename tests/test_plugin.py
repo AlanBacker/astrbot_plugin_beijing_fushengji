@@ -320,6 +320,7 @@ class TestBareWakeWord:
         e = wake_ev(word)
         out = texts(run(plugin.guard_typo(e)))
         assert "浮生记 创建" in out and "浮生记 帮助" in out
+        assert "默认 40 天" in out  # 不填天数时的默认值要说清
         assert e.is_stopped()
 
     def test_signup_points_to_join_and_start(self, plugin):

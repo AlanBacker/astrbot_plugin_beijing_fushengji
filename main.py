@@ -453,9 +453,14 @@ class BeijingFushengji(Star):
                 f"🀄 本局进行到第 {room.day}/{room.days_total} 天。\n"
                 "💡 「浮生记 面板」看账本行情｜「浮生记 排行」看战况｜「浮生记 帮助」全部命令"
             )
+        try:
+            default_days = int(self._cfg("default_days", const.DEFAULT_DAYS))
+        except Exception:
+            default_days = const.DEFAULT_DAYS
         return (
             "🀄 《北京浮生记》——揣 2000 块现金、背 5500 高利贷进京，限期倒买倒卖攒身家。\n"
-            "💡 「浮生记 创建 [天数]」开新局｜「浮生记 帮助」玩法说明书｜「浮生记 榜单」历史龙虎榜"
+            f"💡 「浮生记 创建 [天数]」开新局（不填默认 {default_days} 天）｜"
+            "「浮生记 帮助」玩法说明书｜「浮生记 榜单」历史龙虎榜"
         )
 
     @staticmethod
