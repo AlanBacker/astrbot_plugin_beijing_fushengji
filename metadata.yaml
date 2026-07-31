@@ -1,7 +1,7 @@
-name: astrbot_plugin_beijing_fushengji # 插件唯一识别名，以 astrbot_plugin_ 前缀开头，与仓库名一致
-display_name: 北京浮生记 # 用于展示的名字（需要 AstrBot >= v4.5.0，低版本会忽略该字段，不会报错）
-desc: 群聊多人版《北京浮生记》：揣着 2,000 元现金、背着 5,500 元高利贷进京，40 天倒买倒卖攒身家。每回合一张报纸风格战报图，最多 4 人同局共享行情、互相抬价砸盘；机制数值忠实 2001 年原版，叙事文案全部原创。 # 插件描述（管理面板与插件市场展示）
-short_desc: 群聊里最多 4 人同局的《北京浮生记》，每回合一张报纸战报图 # 插件市场卡片上的一句话简介
-version: v1.2.2 # 插件版本号。格式：v1.1.1 或者 v1.1
-author: AlanBacker # 作者
-repo: https://github.com/AlanBacker/astrbot_plugin_beijing_fushengji # 插件仓库地址
+name: astrbot_plugin_beijing_fushengji
+display_name: 北京浮生记
+desc: 群聊多人版《北京浮生记》：40 天倒买倒卖攒身家，最多 4 人同局共享行情，每回合一张报纸战报图。机制忠实原版，文案原创。
+short_desc: 群聊里最多 4 人同局的《北京浮生记》，每回合一张报纸战报图
+version: v1.2.2
+author: AlanBacker
+repo: https://github.com/AlanBacker/astrbot_plugin_beijing_fushengji
