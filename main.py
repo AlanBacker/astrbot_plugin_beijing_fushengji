@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import asyncio
+import difflib
 import random
 import time
 from collections.abc import AsyncIterator, Callable
@@ -36,6 +37,40 @@ _NO_GAME_TEXT = (
 
 AI_TRIES = 3  # 说书人首选供应商的累计尝试次数（含第一次）
 AI_TIMEOUT = 30  # 单次生成的超时（秒）
+
+# 唤醒词与子命令注册表。框架对「唤醒词对、子命令错」的消息不报错，而是当普通
+# 对话丢给大模型接茬，模型会一本正经地编造"交易成功"——guard_typo 靠这张表把
+# 这类消息拦下。表必须与下方 @fusheng.command 的注册一一对应（测试会核对）。
+WAKE_WORDS = ("浮生记", "fs", "浮生")
+SUBCOMMANDS: dict[str, tuple[str, ...]] = {
+    "创建": ("开局", "new"),
+    "加入": ("上车", "join"),
+    "开始": ("发车", "start"),
+    "去": ("前往", "赶路", "go"),
+    "留守": ("原地", "休整", "stay"),
+    "买": ("购买", "进货", "buy"),
+    "卖": ("出售", "出货", "sell"),
+    "存": ("存款", "存钱"),
+    "取": ("取款", "取钱"),
+    "还": ("还债", "还钱"),
+    "看病": ("治疗", "医院"),
+    "租房": ("扩容", "搬家"),
+    "网吧": ("打工", "上网"),
+    "情报": ("消息", "小道消息"),
+    "面板": ("状态", "账本", "我"),
+    "排行": ("座次", "战况"),
+    "榜单": ("龙虎榜", "排行榜"),
+    "帮助": ("说明", "玩法", "help"),
+    "跳过": ("催", "催场"),
+    "认输": ("投降", "跑路"),
+    "解散": ("散伙",),
+}
+# 任一写法（本名或别名）-> 本名
+_SUB_TO_CANON: dict[str, str] = {
+    form: canon
+    for canon, aliases in SUBCOMMANDS.items()
+    for form in (canon, *aliases)
+}
 
 # 输出指令：("text", str) / ("image", tmpl, ctx, fallback_fn) / ("epilogue", settlement)
 _Out = tuple[Any, ...]
@@ -310,6 +345,51 @@ class BeijingFushengji(Star):
     @filter.command_group("浮生记", alias={"fs", "浮生"})
     def fusheng(self):
         pass
+
+    # ---- 输错命令兜底 ----
+
+    @staticmethod
+    def _closest_subcommand(sub: str) -> str:
+        """给输错的子命令找最接近的本名；找不到返回空串。"""
+        canon = _SUB_TO_CANON.get(sub.lower())
+        if canon:
+            return canon
+        forms = [f for f in _SUB_TO_CANON if f.startswith(sub) or sub.startswith(f)]
+        if not forms:
+            forms = difflib.get_close_matches(sub, list(_SUB_TO_CANON), n=1, cutoff=0.5)
+        return _SUB_TO_CANON[min(forms, key=len)] if forms else ""
+
+    @filter.event_message_type(filter.EventMessageType.ALL)
+    async def guard_typo(self, event: AstrMessageEvent):
+        """唤醒词后面跟了不认识的子命令 -> 当场报错并终止事件，不透传给 LLM。
+
+        只认「第一个词恰好是唤醒词」的消息，像「浮生记真好玩」这类闲聊照旧
+        归大模型；光发一个唤醒词时框架自会回复完整指令树，这里也不插手。
+        """
+        if not getattr(event, "is_at_or_wake_command", False):
+            return  # 没唤醒机器人的消息不归我们管
+        tokens = str(getattr(event, "message_str", "") or "").split()
+        if len(tokens) < 2:
+            return
+        head, sub = tokens[0], tokens[1]
+        if head in WAKE_WORDS:
+            if sub in _SUB_TO_CANON:
+                return  # 正经命令，由对应 handler 处理
+            guess = self._closest_subcommand(sub)
+            hint = f"是不是想说「浮生记 {guess}」？" if guess else ""
+            yield event.plain_result(
+                f"❓ 浮生记没有「{sub[:12]}」这个命令。\n"
+                f"💡 {hint}发送「浮生记 帮助」看全部命令。"
+            )
+            event.stop_event()
+        elif head.lower() == "fs":  # 大小写写岔的 fs：命令同样不会执行，一并拦下提示
+            guess = _SUB_TO_CANON.get(sub) or self._closest_subcommand(sub)
+            hint = f"「浮生记 {guess}」" if guess else "「浮生记 帮助」"
+            yield event.plain_result(
+                f"❓ 唤醒词「{head[:12]}」要写成小写「fs」（或「浮生记」）。\n"
+                f"💡 试试 {hint}。"
+            )
+            event.stop_event()
 
     @fusheng.command("创建", alias={"开局", "new"})
     async def cmd_create(self, event: AstrMessageEvent, days: str = ""):

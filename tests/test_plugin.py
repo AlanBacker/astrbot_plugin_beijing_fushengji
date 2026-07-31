@@ -30,11 +30,22 @@ from astrbot.api.star import StarTools  # noqa: E402
 class FakeEvent:
     """只实现 main.py 用到的事件表面。"""
 
-    def __init__(self, origin: str, uid: str, name: str = "", admin: bool = False):
+    def __init__(
+        self,
+        origin: str,
+        uid: str,
+        name: str = "",
+        admin: bool = False,
+        message: str = "",
+        woken: bool = False,
+    ):
         self.unified_msg_origin = origin
         self._uid = uid
         self._name = name or f"玩家{uid}"
         self._admin = admin
+        self.message_str = message
+        self.is_at_or_wake_command = woken
+        self._stopped = False
 
     def get_sender_id(self):
         return self._uid
@@ -50,6 +61,12 @@ class FakeEvent:
 
     def image_result(self, path: str):
         return ("image", path)
+
+    def stop_event(self):
+        self._stopped = True
+
+    def is_stopped(self):
+        return self._stopped
 
 
 class FakeProvider:
@@ -216,6 +233,83 @@ class TestPlayFlow:
         assert "浮生龙虎榜" in out and "赖皮张" in out  # 空榜时展示祖传榜首
         out = texts(run(plugin.cmd_help(ev("u1"))))
         assert "玩法速览" in out and "京城十站" in out
+
+
+# ---------------------------------------------------------------------------
+# 输错命令兜底：唤醒词 + 未知子命令必须报错拦截，不能漏给 LLM
+# ---------------------------------------------------------------------------
+
+
+def wake_ev(message: str, woken: bool = True) -> FakeEvent:
+    return FakeEvent("test:GroupMessage:10086", "u1", message=message, woken=woken)
+
+
+class TestTypoGuard:
+    @pytest.mark.parametrize("msg", ["fs 出 3 全", "浮生记 出 3 全", "浮生 出 3 全"])
+    def test_typo_subcommand_errors_and_stops(self, plugin, msg):
+        e = wake_ev(msg)
+        out = texts(run(plugin.guard_typo(e)))
+        assert "没有「出」" in out and "浮生记 卖" in out and "浮生记 帮助" in out
+        assert e.is_stopped()
+
+    def test_unrecognizable_typo_still_stops_with_help_hint(self, plugin):
+        e = wake_ev("fs 梭哈 全部")
+        out = texts(run(plugin.guard_typo(e)))
+        assert "没有「梭哈」" in out and "浮生记 帮助" in out
+        assert e.is_stopped()
+
+    @pytest.mark.parametrize(
+        "msg", ["浮生记 卖 1 全", "fs 出售 1 全", "浮生 buy 7 全", "浮生记 认输 确认"]
+    )
+    def test_known_subcommand_passes_silently(self, plugin, msg):
+        e = wake_ev(msg)
+        assert run(plugin.guard_typo(e)) == []
+        assert not e.is_stopped()
+
+    def test_not_woken_message_is_ignored(self, plugin):
+        e = wake_ev("fs 出 3 全", woken=False)
+        assert run(plugin.guard_typo(e)) == []
+        assert not e.is_stopped()
+
+    @pytest.mark.parametrize("msg", ["fs", "浮生记", "浮生记真好玩 啊", "今天 买 什么好"])
+    def test_bare_wake_word_and_chatter_are_left_alone(self, plugin, msg):
+        # 光一个唤醒词由框架回复指令树；首词不是唤醒词的闲聊照旧归 LLM
+        e = wake_ev(msg)
+        assert run(plugin.guard_typo(e)) == []
+        assert not e.is_stopped()
+
+    def test_wrong_case_fs_redirects(self, plugin):
+        e = wake_ev("FS 卖 1 全")
+        out = texts(run(plugin.guard_typo(e)))
+        assert "小写「fs」" in out and "浮生记 卖" in out
+        assert e.is_stopped()
+
+    def test_close_match_suggestions(self, plugin):
+        assert plugin._closest_subcommand("出") == "卖"
+        assert plugin._closest_subcommand("购") == "买"
+        assert plugin._closest_subcommand("排") == "排行"
+        assert plugin._closest_subcommand("HELP") == "帮助"
+        assert plugin._closest_subcommand("龙虎") == "榜单"
+        assert plugin._closest_subcommand("彩票") == ""
+
+    def test_subcommand_table_matches_registrations(self):
+        """SUBCOMMANDS 手工表必须与实际注册的指令树完全一致，防止改代码漏改表。"""
+        from astrbot.core.star.filter.command import CommandFilter
+        from astrbot.core.star.filter.command_group import CommandGroupFilter
+        from astrbot.core.star.star_handler import star_handlers_registry
+
+        registered: dict[str, tuple[str, ...]] = {}
+        group_names: set[str] = set()
+        for md in star_handlers_registry.get_handlers_by_module_name(plugin_main.__name__):
+            for f in md.event_filters:
+                if isinstance(f, CommandGroupFilter) and f._original_group_name == "浮生记":
+                    group_names = {f._original_group_name, *f.alias}
+                elif isinstance(f, CommandFilter) and "浮生记" in (f.parent_command_names or []):
+                    registered[f._original_command_name] = tuple(sorted(f.alias))
+        assert registered, "没在注册表里找到浮生记的子命令，introspection 失效"
+        assert group_names == set(plugin_main.WAKE_WORDS)
+        expected = {k: tuple(sorted(v)) for k, v in plugin_main.SUBCOMMANDS.items()}
+        assert registered == expected
 
 
 # ---------------------------------------------------------------------------
